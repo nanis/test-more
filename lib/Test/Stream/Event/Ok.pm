@@ -29,7 +29,7 @@ sub init {
     my $rb   = $self->[REAL_BOOL];
     my $todo = $ctx->in_todo;
     my $skip = defined $ctx->skip;
-    my $b    = $rb || $todo || $skip || 0;
+    my $b    = $self->[BOOL] || $rb || $todo || $skip || 0;
     my $diag = delete $self->[DIAG];
     my $name = $self->[NAME];
 

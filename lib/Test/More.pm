@@ -77,6 +77,7 @@ sub before_import {
             Test::Stream->shared->set_no_diag(1);
         }
         elsif ($item eq 'modern') {
+            Test::Stream->shared->set_tap_format('modern');
             $modern = 1;
             $meta->[MODERN] = 1;
         }
@@ -291,33 +292,35 @@ sub fail (;$) {
 sub subtest {
     my ($name, $code, @args) = @_;
     my $ctx = context();
-    my ($ok, $state);
+
+    my $state = $ctx->stream->subtest_start;
+    $ctx->clear;
+
     my ($succ, $err) = try {
-        ($ok, $state) = $ctx->nest($code, $name, @args)
+        $code->(@args);
     };
 
+    $ctx->set;
+    my $events = $ctx->stream->subtest_stop;
+
+    my $e = $ctx->subtest(
+        undef,      # real_bool
+        $name,      # name
+        undef,      # diag
+        undef,      # bool
+        undef,      # level
+        $state,     # state
+        $events,    # events
+        $err,       # error
+    );
+
+    my $ok;
     unless ($succ) {
         die $err unless blessed($err) && $err->isa('Test::Stream::Event');
-        if ($err->isa('Test::Stream::Event::Plan')) {
-            $ok = 1;
-            $ctx->set_skip("skip_all");
-        }
-        elsif ($err->isa('Test::Stream::Event::Bail')) {
-            $ctx->bail($err->reason, 1);
-        }
-        else {
-            die $err;
-        }
+        $ctx->bail($err->reason) if $err->isa('Test::Stream::Event::Bail');
     }
 
-    if (!$ok && !$state->[STATE_COUNT]) {
-        $ctx->ok(0, "No tests run for subtest \"$name\"");
-    }
-    else {
-        $ctx->ok($ok, $name);
-    }
-
-    return $ok;
+    return $e->bool;
 }
 
 sub require_ok($;$) {

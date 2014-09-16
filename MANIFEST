@@ -21,12 +21,12 @@ lib/Test/Stream/Context.pm
 lib/Test/Stream/Deferred.pm
 lib/Test/Stream/Event.pm
 lib/Test/Stream/Event/Bail.pm
-lib/Test/Stream/Event/Child.pm
 lib/Test/Stream/Event/Diag.pm
 lib/Test/Stream/Event/Finish.pm
 lib/Test/Stream/Event/Note.pm
 lib/Test/Stream/Event/Ok.pm
 lib/Test/Stream/Event/Plan.pm
+lib/Test/Stream/Event/Subtest.pm
 lib/Test/Stream/ExitMagic.pm
 lib/Test/Stream/ExitMagic/Context.pm
 lib/Test/Stream/Exporter.pm

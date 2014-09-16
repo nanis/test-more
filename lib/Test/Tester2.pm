@@ -283,7 +283,7 @@ sub render_check {
         name bool real_bool action max
         in_todo todo skip
         package file line pid
-        depth is_subtest source tests_failed tests_run
+        is_subtest source tests_failed tests_run
         encoding
         tool_name tool_package
         message
@@ -327,7 +327,7 @@ sub _simplify_event {
     my $tpkg = $fields->{tool_package};
     $fields->{tool_name} =~ s/^\Q$tpkg\E:://;
 
-    $fields->{$_} = $r->context->$_ for qw/encoding in_todo todo depth pid skip/;
+    $fields->{$_} = $r->context->$_ for qw/encoding in_todo todo pid skip/;
 
     $fields->{tap} = $r->to_tap if $r->can('to_tap');
     chomp($fields->{tap}) if $fields->{tap};
@@ -594,7 +594,7 @@ All events will be subclasses of L<Test::Builder::Event>
 
 =item L<Test::Builder::Event::Bail>
 
-=item L<Test::Builder::Event::Child>
+=item L<Test::Builder::Event::Subtest>
 
 =back
 
@@ -666,10 +666,6 @@ argument. The coderef should return true for valid, false for invalid.
 =item pid
 
 The process ID the event came from.
-
-=item depth
-
-Usually 0, but will be 1 for subtests, 2 for nested subtests, etc.
 
 =item source
 

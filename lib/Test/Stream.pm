@@ -19,10 +19,12 @@ BEGIN {
         listeners mungers
         bailed_out
         exit_on_disruption
-        use_tap use_legacy _use_fork
+        use_legacy _use_fork
+        tap_format
         use_numbers
         io_sets
         event_id
+        subtests
     };
     Test::Stream::ArrayBase->cleanup;
 }
@@ -39,7 +41,10 @@ use constant OUT_ERR  => 1;
 use constant OUT_TODO => 2;
 
 use Test::Stream::Exporter;
-exports qw/OUT_STD OUT_ERR OUT_TODO STATE_COUNT STATE_FAILED STATE_PLAN STATE_ENDED STATE_LEGACY/;
+exports qw/
+    OUT_STD OUT_ERR OUT_TODO
+    STATE_COUNT STATE_FAILED STATE_PLAN STATE_PASSING STATE_LEGACY STATE_ENDED
+/;
 Test::Stream::Exporter->cleanup;
 
 sub plan   { $_[0]->[STATE]->[-1]->[STATE_PLAN]   }
@@ -73,11 +78,12 @@ sub init {
     $self->[PID]         = $$;
     $self->[TID]         = get_tid();
     $self->[STATE]       = [[0, 0, undef, 1]];
-    $self->[USE_TAP]     = 1;
+    $self->[TAP_FORMAT]  = 'legacy';
     $self->[USE_NUMBERS] = 1;
     $self->[IO_SETS]     = Test::Stream::IOSets->new;
     $self->[EVENT_ID]    = 1;
     $self->[NO_ENDING]   = 1;
+    $self->[SUBTESTS]    = [];
 
     $self->use_fork if USE_THREADS;
 
@@ -121,7 +127,7 @@ sub init {
         push @stack => $new;
 
         $new->set_exit_on_disruption(0);
-        $new->set_use_tap(0);
+        $new->set_tap_format(undef);
         $new->set_use_legacy(0);
 
         return ($new, $old);
@@ -150,116 +156,165 @@ sub intercept {
     return $ok;
 }
 
-sub send {
-    my ($self, @events) = @_;
+sub subtest_start {
+    my $self = shift;
+    my $state = $self->push_state;
+    push @{$self->[SUBTESTS]} => [];
+    return $state;
+}
 
-     return $self->fork_out(@events)
+sub subtest_stop {
+    my $self = shift;
+    $self->pop_state;
+    return pop @{$self->[SUBTESTS]};
+}
+
+sub send {
+    my ($self, $ei) = @_;
+
+    if (@{$self->[SUBTESTS]}) {
+        push @{$self->[SUBTESTS]->[-1]} => $ei;
+
+        my ($do_post) = $self->_pre_out_state($ei);
+        $self->_post_out_state($ei, $do_post) if $do_post;
+
+        return;
+    }
+
+    return $self->fork_out($ei)
         if $self->[_USE_FORK]
         && ($$ != $self->[PID] || get_tid() != $self->[TID]);
 
+    my @events = ($ei);
     if ($self->[MUNGERS]) {
         @events = $_->($self, @events) for @{$self->[MUNGERS]};
     }
 
-    push @{$self->[STATE]->[-1]->[STATE_LEGACY]} => @events if $self->[USE_LEGACY];
+    $self->_send($_) for @events;
+}
 
-    for my $e (@events) {
-        my $is_ok = 0;
-        my $is_plan = 0;
-        my $no_out = 0;
-        my @sub_events;
-        if ($e->isa('Test::Stream::Event::Ok')) {
-            $is_ok = 1;
-            $self->[STATE]->[-1]->[STATE_COUNT]++;
-            if (!$e->bool) {
-                $self->[STATE]->[-1]->[STATE_FAILED]++;
-                $self->[STATE]->[-1]->[STATE_PASSING] = 0;
-            }
+sub _send {
+    my $self = shift;
+    my ($e) = @_;
 
-            @sub_events = @{$e->diag} if $e->diag && !$self->[NO_DIAG];
+    push @{$self->[STATE]->[-1]->[STATE_LEGACY]} => $e if $self->[USE_LEGACY];
+
+    my ($do_post, $does_tap, $no_out, @sub_events) = $self->_pre_out_state($e);
+
+    $self->_print_tap($e, @sub_events)
+        unless $^C
+        || $no_out
+        || !$self->[TAP_FORMAT]
+        || !($does_tap || $e->can('to_tap'));
+    
+    if ($self->[LISTENERS]) {
+        $_->($self, $e, @sub_events) for @{$self->[LISTENERS]};
+    }
+
+    $self->_post_out_state($e, $do_post) if $do_post;
+}
+
+sub _pre_out_state {
+    my $self = shift;
+    my ($e) = @_;
+
+    my $does_tap = 0;
+    my $do_post  = 0;
+    my $no_out   = 0;
+    my @sub_events;
+
+    if ($e->isa('Test::Stream::Event::Ok')) {
+        $does_tap = 1;
+
+        $self->[STATE]->[-1]->[STATE_COUNT]++;
+        if (!$e->bool) {
+            $self->[STATE]->[-1]->[STATE_FAILED]++;
+            $self->[STATE]->[-1]->[STATE_PASSING] = 0;
         }
-        elsif (!$self->[NO_HEADER] && $e->isa('Test::Stream::Event::Finish')) {
-            $self->[STATE]->[-1]->[STATE_ENDED] = $e->context->snapshot;
-            $is_ok = 1;
-            my $plan = $self->[STATE]->[-1]->[STATE_PLAN];
-            if ($e->tests_run && $plan && $plan->directive eq 'NO PLAN') {
-                $plan->set_max($self->[STATE]->[-1]->[STATE_COUNT]);
-                $plan->set_directive(undef);
-                push @sub_events => $plan;
-            }
+
+        @sub_events = @{$e->diag} if $e->diag && !$self->[NO_DIAG];
+    }
+    elsif (!$self->[NO_HEADER] && $e->isa('Test::Stream::Event::Finish')) {
+        $self->[STATE]->[-1]->[STATE_ENDED] = $e->context->snapshot;
+        $does_tap = 1;
+        my $plan = $self->[STATE]->[-1]->[STATE_PLAN];
+        if ($e->tests_run && $plan && $plan->directive eq 'NO PLAN') {
+            $plan->set_max($self->[STATE]->[-1]->[STATE_COUNT]);
+            $plan->set_directive(undef);
+            push @sub_events => $plan;
         }
-        elsif ($self->[NO_DIAG] && $e->isa('Test::Stream::Event::Diag')) {
+    }
+    elsif ($self->[NO_DIAG] && $e->isa('Test::Stream::Event::Diag')) {
+        $no_out = 1;
+    }
+    elsif ($e->isa('Test::Stream::Event::Plan')) {
+        $do_post = 'plan';
+        if($self->[NO_HEADER]) {
             $no_out = 1;
         }
-        elsif ($e->isa('Test::Stream::Event::Plan')) {
-            $is_plan = 1;
-            if($self->[NO_HEADER]) {
-                $no_out = 1;
-            }
-            elsif(my $existing = $self->[STATE]->[-1]->[STATE_PLAN]) {
-                my $directive = $existing ? $existing->directive : '';
+        elsif(my $existing = $self->[STATE]->[-1]->[STATE_PLAN]) {
+            my $directive = $existing ? $existing->directive : '';
 
-                if ($existing && (!$directive || $directive eq 'NO PLAN')) {
-                    my ($p1, $f1, $l1) = $existing->context->call;
-                    my ($p2, $f2, $l2) = $e->context->call;
-                    die "Tried to plan twice!\n    $f1 line $l1\n    $f2 line $l2\n";
+            if ($existing && (!$directive || $directive eq 'NO PLAN')) {
+                my ($p1, $f1, $l1) = $existing->context->call;
+                my ($p2, $f2, $l2) = $e->context->call;
+                die "Tried to plan twice!\n    $f1 line $l1\n    $f2 line $l2\n";
+            }
+        }
+
+        my $directive = $e->directive;
+        $no_out = 1 if $directive && $directive eq 'NO PLAN';
+    }
+    elsif ($e->isa('Test::Stream::Event::Bail')) {
+        $do_post = 'bail';
+    }
+
+    return ($do_post, $does_tap, $no_out, @sub_events);
+}
+
+sub _post_out_state {
+    my $self = shift;
+    my ($e, $type) = @_;
+
+    if ($type eq 'plan') {
+        $self->[STATE]->[-1]->[STATE_PLAN] = $e;
+        return unless $e->directive;
+        return unless $e->directive eq 'SKIP';
+        die $e unless $self->[EXIT_ON_DISRUPTION] && !@{$self->[SUBTESTS]};
+        exit 0;
+    }
+    elsif ($type eq 'bail') {
+        $self->[BAILED_OUT] = $e;
+        $self->[NO_ENDING]  = 1;
+        die $e unless $self->[EXIT_ON_DISRUPTION] && !@{$self->[SUBTESTS]};
+        exit 255;
+    }
+}
+
+sub _print_tap {
+    my $self = shift;
+
+    for my $se (@_) {
+        my $num = $self->use_numbers ? $self->[STATE]->[-1]->[STATE_COUNT] : undef;
+        if(my %sets = $se->to_tap($num, $self->[TAP_FORMAT])) {
+            my $enc = $se->encoding || confess "Could not find encoding!";
+            if(my $io = $self->[IO_SETS]->{$enc}) {
+                local($\, $", $,) = (undef, ' ', '');
+                while (my ($hid, $msg) = each(%sets)) {
+                    my $fh = $io->[$hid];
+                    print $fh $msg if $fh && $msg;
                 }
             }
-
-            my $directive = $e->directive;
-            $no_out = 1 if $directive && $directive eq 'NO PLAN';
-        }
-
-        if (!($^C || $no_out) && $self->[USE_TAP] && ($is_ok || $e->can('to_tap'))) {
-            for my $se ($e, @sub_events) {
-                my $num = $self->use_numbers ? $self->[STATE]->[-1]->[STATE_COUNT] : undef;
-                if(my ($hid, $msg) = $se->to_tap($num)) {
-                    my $enc = $se->encoding || confess "Could not find encoding!";
-
-                    if(my $io = $self->[IO_SETS]->{$enc}->[$hid]) {
-                        my $indent = $se->indent;
-
-                        local($\, $", $,) = (undef, ' ', '');
-                        $msg =~ s/^/$indent/mg;
-                        print $io $msg if $io && $msg;
-                    }
-                }
-            }
-        }
-
-        if ($self->[LISTENERS]) {
-            $_->($self, $e, @sub_events) for @{$self->[LISTENERS]};
-        }
-
-        if ($is_plan) {
-            $self->[STATE]->[-1]->[STATE_PLAN] = $e;
-            next   unless $e->directive;
-            next   unless $e->directive eq 'SKIP';
-            die $e unless $self->[EXIT_ON_DISRUPTION];
-            exit 0;
-        }
-        elsif (!$is_ok && $e->isa('Test::Stream::Event::Bail')) {
-            $self->[BAILED_OUT] = $e;
-            $self->[NO_ENDING]  = 1;
-            die $e unless $self->[EXIT_ON_DISRUPTION];
-            exit 255;
         }
     }
 }
 
-sub push_state { push @{$_[0]->[STATE]} => [0, 0, undef, 1] }
-sub pop_state  { pop  @{$_[0]->[STATE]} }
+sub pop_state { pop @{$_[0]->[STATE]} }
 
-sub sub_state {
-    my $self = shift;
-    my ($code, @args) = @_;
-
-    croak "sub_state takes a single coderef argument" unless $code;
-    $self->push_state;
-    my ($ok, $error) = try { $code->(@args) };
-
-    die $error unless $ok;
-    return $self->pop_state;
+sub push_state {
+    my $state = [0, 0, undef, 1];
+    push @{$_[0]->[STATE]} => $state;
+    return $state;
 }
 
 sub listen {
@@ -338,7 +393,7 @@ sub fork_cull {
         confess "Empty event object found '$tempdir/$file'" unless $obj;
         $obj->context->set_stream($self);
 
-        $self->send($obj);
+        $self->_send($obj);
 
         if ($ENV{TEST_KEEP_TMP_DIR}) {
             rename("$tempdir/$file", "$tempdir/$file.complete")

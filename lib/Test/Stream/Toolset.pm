@@ -7,7 +7,7 @@ use Test::Stream::Meta    qw/is_tester init_tester anoint/;
 
 # Preload these so the autoload is not necessary
 use Test::Stream::Event::Bail;
-use Test::Stream::Event::Child;
+use Test::Stream::Event::Subtest;
 use Test::Stream::Event::Diag;
 use Test::Stream::Event::Finish;
 use Test::Stream::Event::Note;

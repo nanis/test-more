@@ -12,9 +12,9 @@ use Test::Stream::Event();
 use Test::Stream::Util qw/try/;
 use Test::Stream::Meta qw/init_tester is_tester/;
 
-use Test::Stream::ArrayBase;
+use Test::Stream::ArrayBase qw/accessors to_hash/;
 BEGIN {
-    accessors qw/frame stream encoding in_todo todo modern depth pid skip parent provider/;
+    accessors qw/frame stream encoding in_todo todo modern pid skip provider/;
     Test::Stream::ArrayBase->cleanup;
 }
 
@@ -27,19 +27,18 @@ Test::Stream::Exporter->cleanup();
     $Test::Builder::Level ||= 1;
 }
 
-our $DEPTH = 0;
-our $CURRENT;
-our $PARENT;
+my $CURRENT = undef;
 
-sub init {
-    $_[0]->[FRAME]    ||= _find_context(1);                # +1 for call to init
-    $_[0]->[STREAM]   ||= Test::Stream->shared;
-    $_[0]->[ENCODING] ||= 'legacy';
-    $_[0]->[PID]      ||= $$;
-    $_[0]->[PARENT]   ||= $PARENT;
+sub peek  { $CURRENT }
+sub clear { $CURRENT = undef }
+
+sub set {
+    my $new = pop @_;
+    confess "set() must be given a valid context object!"
+        unless $new && blessed $new && $new->isa(__PACKAGE__);
+    $CURRENT = $new;
+    weaken($CURRENT);
 }
-
-sub peek { $CURRENT }
 
 sub context {
     # If the context has already been initialized we simply return it, we
@@ -49,6 +48,16 @@ sub context {
     # stack.
     return $CURRENT if $CURRENT;
 
+    my ($level) = @_;
+    my $ctx = __PACKAGE__->new(1 + ($level || 1));
+
+    $CURRENT = $ctx;
+    weaken($CURRENT);
+    return $ctx;
+}
+
+sub new {
+    my $class = shift;
     my ($level) = @_;
     my $call = _find_context($level);
 
@@ -89,7 +98,7 @@ sub context {
         $stream->fork_cull();
     }
 
-    my $ctx = bless(
+    return bless(
         [
             $call,
             $stream,
@@ -97,18 +106,12 @@ sub context {
             $in_todo,
             $todo,
             $meta->[Test::Stream::Meta::MODERN]   || 0,
-            $DEPTH,
             $$,
             undef,
-            $PARENT || undef,
             [$ppkg, $pname]
         ],
         __PACKAGE__
     );
-
-    $CURRENT = $ctx;
-    weaken($CURRENT);
-    return $ctx;
 }
 
 sub _find_context {
@@ -208,67 +211,53 @@ sub send {
     $self->[STREAM]->send(@_);
 }
 
-sub stage {
-    my $self = shift;
-    my ($code) = @_;
-
-    my ($ok, $error) = try {
-        my $clone = bless [@$self], __PACKAGE__;
-        $clone->[FRAME] = [$self->call];
-        local $CURRENT = $clone;
-        $code->($self, $clone);
-    };
-
-    die $error unless $ok;
-}
-
-sub nest {
-    my $self = shift;
-    my ($code, $name, @args) = @_;
-
-    confess "nest() only works on the CURRENT context"
-        unless $CURRENT && $self == $CURRENT;
-
-    my $pass;
-
-    $self->child('push');
-    $self->note("Subtest: $name");
-
-    my $eod = $self->stream->exit_on_disruption;
-    $self->stream->set_exit_on_disruption(0);
-    $self->stream->push_state;
-    my $todo = $self->hide_todo;
-    my ($ok, $error) = try {
-        local $DEPTH = $DEPTH + 1;
-        {
-            local $PARENT = $self->snapshot;
-            local $CURRENT = undef;
-            local $Test::Builder::Level = 1;
-            $code->(@args);
-        }
-
-        my $ctx = $self->snapshot;
-        $ctx->[DEPTH] = $DEPTH;
-        $ctx->done_testing unless $self->[STREAM]->plan || $self->stream->ended;
-
-        require Test::Stream::ExitMagic;
-        {
-            local $? = 0;
-            Test::Stream::ExitMagic->new->do_magic($ctx->stream, $ctx);
-        }
-
-        $pass = $self->stream->is_passing && $self->stream->count > 0;
-    };
-    my $state = $self->stream->pop_state;
-    $self->stream->set_exit_on_disruption($eod);
-    $self->restore_todo($todo);
-
-    $self->child('pop');
-
-    die $error unless $ok;
-
-    return $pass, $state;
-}
+#sub nest {
+#    my $self = shift;
+#    my ($code, $name, @args) = @_;
+#
+#    confess "nest() only works on the CURRENT context"
+#        unless $CURRENT && $self == $CURRENT;
+#
+#    my $pass;
+#
+#    $self->child('push');
+#    $self->note("Subtest: $name");
+#
+#    my $eod = $self->stream->exit_on_disruption;
+#    $self->stream->set_exit_on_disruption(0);
+#    $self->stream->push_state;
+#    my $todo = $self->hide_todo;
+#    my ($ok, $error) = try {
+#        local $DEPTH = $DEPTH + 1;
+#        {
+#            local $PARENT = $self->snapshot;
+#            local $CURRENT = undef;
+#            local $Test::Builder::Level = 1;
+#            $code->(@args);
+#        }
+#
+#        my $ctx = $self->snapshot;
+#        $ctx->[DEPTH] = $DEPTH;
+#        $ctx->done_testing unless $self->[STREAM]->plan || $self->stream->ended;
+#
+#        require Test::Stream::ExitMagic;
+#        {
+#            local $? = 0;
+#            Test::Stream::ExitMagic->new->do_magic($ctx->stream, $ctx);
+#        }
+#
+#        $pass = $self->stream->is_passing && $self->stream->count > 0;
+#    };
+#    my $state = $self->stream->pop_state;
+#    $self->stream->set_exit_on_disruption($eod);
+#    $self->restore_todo($todo);
+#
+#    $self->child('pop');
+#
+#    die $error unless $ok;
+#
+#    return $pass, $state;
+#}
 
 sub hide_todo {
     my $self = shift;
@@ -344,8 +333,7 @@ sub register_event {
 
 sub diag_todo {
     return 1 if $_[0]->[IN_TODO];
-    return 0 unless $_[0]->[PARENT];
-    return $_[0]->[PARENT]->diag_todo;
+    return 0;
 }
 
 our $AUTOLOAD;

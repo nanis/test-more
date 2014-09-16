@@ -135,8 +135,6 @@ sub child {
         $ctx->throw("You already have a child named ($cname) running");
     }
 
-    $ctx->child('push');
-
     my $stream = $self->{stream} || Test::Stream->shared;
 
     my $child = bless {
@@ -187,7 +185,6 @@ sub finalize {
     $? = $self->{'?'};
 
     $ctx = $parent->ctx;
-    $ctx->child('pop');
     if ($count > 0) {
         $ctx->ok($passing, $name);
     }
