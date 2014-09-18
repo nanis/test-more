@@ -1,0 +1,48 @@
+ALL OPTIONS:
+    enable_fork
+    encoding
+    modern
+    subtest_delay
+    subtest_immediate
+    use_legacy
+    use_numbers
+    use_tap
+    verbose_diag_to_stdout
+
+DEFAULT:
+    enable_fork             0 (unless threads loaded)
+    encoding                legacy
+    modern                  0
+    subtest_delay           0
+    subtest_immediate       1
+    use_legacy              0 (unless Test::Builder is loaded)
+    use_numbers             1
+    use_tap                 1
+    verbose_diag_to_stdout  0
+
+CONFIG:
+    enable_fork
+    encoding
+    modern
+    subtest_delay
+    subtest_immediate
+    use_legacy
+    use_numbers
+    use_tap
+    verbose_diag_to_stdout
+
+STREAM:
+    enable_fork
+    use_legacy
+    use_numbers
+    use_tap
+
+META:
+    encoding
+    modern
+    subtest_delay
+    subtest_immediate
+    use_tap
+    use_legacy
+    verbose_diag_to_stdout
+
