@@ -581,18 +581,28 @@ sub _finalize_event {
         return unless $e->directive;
         return unless $e->directive eq 'SKIP';
 
-        $self->[SUBTEST_EXCEPTION]->[-1] = $e if $e->in_subtest;
+        if ($e->in_subtest) {
+            $self->[SUBTEST_EXCEPTION]->[-1] = $e;
+            no warnings 'exiting';
+            use Carp qw/cluck/;
+            cluck "XXX";
+            last TB_SUBTEST_FLOW_CONTROL;
+        }
 
-        die $e if $e->in_subtest || !$self->[EXIT_ON_DISRUPTION];
+        die $e unless $self->[EXIT_ON_DISRUPTION];
         exit 0;
     }
     elsif (!$cache->{do_tap} && $e->isa('Test::Stream::Event::Bail')) {
         $self->[BAILED_OUT] = $e;
         $self->[NO_ENDING]  = 1;
 
-        $self->[SUBTEST_EXCEPTION]->[-1] = $e if $e->in_subtest;
+        if ($e->in_subtest) {
+            $self->[SUBTEST_EXCEPTION]->[-1] = $e;
+            no warnings 'exiting';
+            last TB_SUBTEST_FLOW_CONTROL;
+        }
 
-        die $e if $e->in_subtest || !$self->[EXIT_ON_DISRUPTION];
+        die $e unless $self->[EXIT_ON_DISRUPTION];
         exit 255;
     }
 }

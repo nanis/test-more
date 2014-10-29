@@ -334,7 +334,7 @@ sub subtest {
     $ctx->clear;
     my $todo = $ctx->hide_todo;
 
-    my ($succ, $err) = try {
+    TB_SUBTEST_FLOW_CONTROL: {
         {
             no warnings 'once';
             local $Test::Builder::Level = 1;
@@ -350,16 +350,15 @@ sub subtest {
             local $? = 0;
             Test::Stream::ExitMagic->new->do_magic($stream, $ctx->snapshot);
         }
-    };
+    }
 
     $ctx->set;
     $ctx->restore_todo($todo);
     # This sends the subtest event
     my $st = $ctx->child('pop', $name);
 
-    unless ($succ) {
-        die $err unless blessed($err) && $err->isa('Test::Stream::Event');
-        $ctx->bail($err->reason) if $err->isa('Test::Stream::Event::Bail');
+    if (my $e = $st->exception) {
+        $ctx->bail($e->reason) if $e->isa('Test::Stream::Event::Bail');
     }
 
     return $st->bool;
