@@ -334,6 +334,7 @@ sub subtest {
     $ctx->clear;
     my $todo = $ctx->hide_todo;
 
+    package main;
     TB_SUBTEST_FLOW_CONTROL: {
         {
             no warnings 'once';

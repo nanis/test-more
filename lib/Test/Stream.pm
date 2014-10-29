@@ -583,10 +583,11 @@ sub _finalize_event {
 
         if ($e->in_subtest) {
             $self->[SUBTEST_EXCEPTION]->[-1] = $e;
+        }
+
+        {
             no warnings 'exiting';
-            use Carp qw/cluck/;
-            cluck "XXX";
-            last TB_SUBTEST_FLOW_CONTROL;
+            last TB_SUBTEST_FLOW_CONTROL if $e->in_subtest;
         }
 
         die $e unless $self->[EXIT_ON_DISRUPTION];
